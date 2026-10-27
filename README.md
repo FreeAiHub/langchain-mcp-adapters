@@ -357,3 +357,6 @@ In your [`langgraph.json`](https://langchain-ai.github.io/langgraph/cloud/refere
   }
 }
 ```
+
+## About this fork
+Independent fork of the MIT-licensed upstream, which is no longer maintained. New work lives in [`apps/agent-chat`](apps/agent-chat): a Manus-style agent chat for Cloudflare Pages. Original license and authorship are unchanged.

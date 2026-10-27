@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Agent Chat</title>
+<style>
+  :root { color-scheme: light dark; --bg:#fafafa; --fg:#18181b; --card:#fff; --mut:#71717a; --line:#e4e4e7; --acc:#4f46e5; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0b0b0e; --fg:#f4f4f5; --card:#16161a; --mut:#a1a1aa; --line:#27272a; --acc:#818cf8; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.5 system-ui,sans-serif; }
+  main { max-width:760px; margin:0 auto; padding:16px; min-height:100dvh; display:flex; flex-direction:column; gap:12px; }
+  h1 { font-size:1.1rem; margin:8px 0; }
+  #log { flex:1; display:flex; flex-direction:column; gap:10px; }
+  .msg { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:10px 14px; white-space:pre-wrap; overflow-wrap:anywhere; }
+  .msg.user { border-color:var(--acc); }
+  .step { font:13px ui-monospace,monospace; color:var(--mut); border-left:3px solid var(--acc); padding:4px 10px; overflow-wrap:anywhere; }
+  .step.err { border-color:#dc2626; }
+  form { display:flex; gap:8px; position:sticky; bottom:0; background:var(--bg); padding:8px 0; }
+  input, button { font:inherit; padding:10px 12px; border-radius:10px; border:1px solid var(--line); background:var(--card); color:var(--fg); }
+  #q { flex:1; min-width:0; }
+  button { background:var(--acc); color:#fff; border:0; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:default; }
+  #code { width:100%; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Agent Chat</h1>
+  <input id="code" type="password" placeholder="Access code" autocomplete="off">
+  <div id="log" aria-live="polite"></div>
+  <form id="f">
+    <input id="q" placeholder="Give the agent a task…" autocomplete="off" required>
+    <button id="go">Send</button>
+  </form>
+</main>
+<script>
+const log = document.getElementById("log");
+const codeEl = document.getElementById("code");
+try { codeEl.value = sessionStorage.getItem("code") || ""; } catch {}
+const history = [];
+
+function add(cls, text) {
+  const d = document.createElement("div");
+  d.className = cls;
+  d.textContent = text;
+  log.append(d);
+  d.scrollIntoView({ block: "end" });
+  return d;
+}
+
+document.getElementById("f").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const q = document.getElementById("q");
+  const go = document.getElementById("go");
+  const text = q.value.trim();
+  if (!text) return;
+  try { sessionStorage.setItem("code", codeEl.value); } catch {}
+  q.value = ""; go.disabled = true;
+  history.push({ role: "user", content: text });
+  add("msg user", text);
+  let answer = "";
+  try {
+    const res = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-access-code": codeEl.value },
+      body: JSON.stringify({ messages: history }),
+    });
+    if (!res.ok || !res.body) { add("step err", res.status === 401 ? "Wrong access code" : "Error " + res.status); return; }
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    const steps = {};
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let i;
+      while ((i = buf.indexOf("\n\n")) >= 0) {
+        const raw = buf.slice(0, i); buf = buf.slice(i + 2);
+        const ev = /event: (.*)/.exec(raw)?.[1];
+        const data = JSON.parse(/data: (.*)/.exec(raw)?.[1] || "{}");
+        if (ev === "text") { answer += (answer ? "\n\n" : "") + data.text; add("msg", data.text); }
+        else if (ev === "step") steps[data.id] = add("step", "▶ " + data.name + " " + JSON.stringify(data.input));
+        else if (ev === "result") { const s = steps[data.id]; if (s) { s.textContent += "\n✔ " + data.output; if (data.isError) s.classList.add("err"); } }
+        else if (ev === "error") add("step err", data.message);
+      }
+    }
+  } catch (err) {
+    add("step err", "Network error");
+  } finally {
+    if (answer) history.push({ role: "assistant", content: answer });
+    go.disabled = false; q.focus();
+  }
+});
+</script>
+</body>
+</html>
